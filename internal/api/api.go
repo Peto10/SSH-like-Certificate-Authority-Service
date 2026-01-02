@@ -8,6 +8,7 @@ import (
 type Controller struct {
 	Log *slog.Logger
 }
+
 func NewController(logger *slog.Logger) *Controller {
 	return &Controller{Log: logger}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Peto10/SSH-like-Certificate-Authority-Service/internal/api"
 	"github.com/Peto10/SSH-like-Certificate-Authority-Service/internal/server"
+	"github.com/joho/godotenv"
 )
 
 const (
@@ -16,6 +17,7 @@ const (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	c := api.NewController(logger)
+	godotenv.Load("../.env")
 
 	c.Log.Info("service starting", "URL", fmt.Sprintf("http://localhost%s", defaultServerHostName))
 
