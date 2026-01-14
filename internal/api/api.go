@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -40,23 +41,25 @@ func NewController(logger *slog.Logger, allowedTokens map[string][]string, caSig
 func (c *Controller) Sign(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	// Get authentication token and corresponding principals
 	authToken := r.Header.Get("Authorization")
-	principals, isValid := c.getPrincipals(authToken)
-	if !isValid {
-		c.Log.Warn("authentication failed", "reason", "invalid access token")
+	principals, err := c.getPrincipals(authToken)
+	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(errorResponse{Error: "access token not valid"})
+		json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
 		return
 	}
 
+	// Decode request body
 	var reqBody requestBody
-	err := json.NewDecoder(r.Body).Decode(&reqBody)
+	err = json.NewDecoder(r.Body).Decode(&reqBody)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(errorResponse{Error: "failed to decode request body"})
 		return
 	}
 
+	// Parse public key
 	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(reqBody.PublicKey))
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -64,12 +67,14 @@ func (c *Controller) Sign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate public key
 	if pubKey.Type() != ssh.KeyAlgoED25519 {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(errorResponse{Error: "only ed25519 keys are supported"})
 		return
 	}
 
+	// Sign 
 	signedCert, err := signUserKey(pubKey, c.caSigner, principals)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -77,7 +82,7 @@ func (c *Controller) Sign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Log certificate issuance details
+	// Log certificate details
 	issuedAt := time.Unix(int64(signedCert.ValidAfter), 0)
 	expiresAt := time.Unix(int64(signedCert.ValidBefore), 0)
 	c.Log.Info("certificate issued",
@@ -92,14 +97,17 @@ func (c *Controller) Sign(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(successResponse{SignedCert: string(certBytes)})
 }
 
-func (c *Controller) getPrincipals(token string) ([]string, bool) {
+func (c *Controller) getPrincipals(token string) ([]string, error) {
 	if strings.HasPrefix(token, "Bearer ") {
 		token = strings.TrimPrefix(token, "Bearer ")
 	} else {
-		return nil, false
+		return nil, fmt.Errorf("Invalid auth token syntax")
 	}
 	principals, exists := c.allowedTokens[token]
-	return principals, exists
+	if !exists {
+		return nil, fmt.Errorf("access token not valid or has no principals")
+	}
+	return principals, nil
 }
 
 func signUserKey(
